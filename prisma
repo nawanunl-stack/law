@@ -1,0 +1,167 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ทะเบียนกฎหมาย
+model Law {
+  id              String   @id @default(cuid())
+  title           String   // ชื่อกฎหมาย
+  lawNumber       String?  // เลขที่กฎหมาย
+  publishedDate   DateTime? // วันที่ประกาศ
+  effectiveDate   DateTime? // วันที่มีผลบังคับใช้
+  source          Source   // แหล่งที่มา
+  sourceUrl       String?  // URL ต้นฉบับ
+  pdfUrl          String?  // ลิงก์ PDF
+  fullText        String?  @db.Text // เนื้อหาเต็ม
+  summary         String?  @db.Text // สรุปโดย AI
+  category        String?  // หมวดหมู่
+  status          LawStatus @default(ACTIVE)
+  
+  // ความสัมพันธ์
+  requirements    Requirement[]
+  compliances     Compliance[]
+  notifications   Notification[]
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  analyzedAt      DateTime? // วันที่วิเคราะห์ล่าสุด
+
+  @@index([source, status])
+  @@index([category])
+}
+
+enum Source {
+  ROYAL_GAZETTE      // ราชกิจจานุเบกษา
+  LABOUR_WELFARE     // กรมสวัสดิการแรงงาน
+  OTHER
+}
+
+enum LawStatus {
+  ACTIVE            // บังคับใช้
+  AMENDED           // แก้ไขเพิ่มเติม
+  REPEALED          // ยกเลิก
+  PENDING           // รอวิเคราะห์
+}
+
+// ข้อกำหนดย่อย (วิเคราะห์โดย AI)
+model Requirement {
+  id              String   @id @default(cuid())
+  lawId           String
+  law             Law      @relation(fields: [lawId], references: [id], onDelete: Cascade)
+  
+  sectionNumber   String?  // มาตรา/ข้อ
+  title           String   // หัวข้อ
+  description     String   @db.Text // รายละเอียด
+  
+  // 5W1H ที่วิเคราะห์ได้
+  who             String?  @db.Text // ใครต้องทำ
+  what            String?  @db.Text // ทำอะไร
+  where           String?  @db.Text // ที่ไหน
+  how             String?  @db.Text // อย่างไร
+  documents       String[] // เอกสารที่เกี่ยวข้อง
+  deadline        String?  // กำหนดเวลา
+  
+  responsibleDepts String[] // แผนกที่เกี่ยวข้อง
+  priority        Priority @default(MEDIUM)
+  
+  compliances     Compliance[]
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([lawId])
+}
+
+enum Priority {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+// การประเมินความสอดคล้อง
+model Compliance {
+  id              String   @id @default(cuid())
+  lawId           String
+  law             Law      @relation(fields: [lawId], references: [id], onDelete: Cascade)
+  requirementId   String?
+  requirement     Requirement? @relation(fields: [requirementId], references: [id])
+  
+  status          ComplianceStatus @default(NOT_ASSESSED)
+  evidence        String?  @db.Text // หลักฐานการปฏิบัติ
+  notes           String?  @db.Text // หมายเหตุ
+  assessedBy      String?  // ผู้ประเมิน
+  assessedAt      DateTime?
+  dueDate         DateTime? // กำหนดแก้ไข (ถ้าไม่ผ่าน)
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([lawId, status])
+  @@index([requirementId])
+}
+
+enum ComplianceStatus {
+  NOT_ASSESSED    // ยังไม่ประเมิน
+  COMPLIANT       // สอดคล้อง
+  PARTIAL         // สอดคล้องบางส่วน
+  NON_COMPLIANT   // ไม่สอดคล้อง
+  NOT_APPLICABLE  // ไม่เกี่ยวข้อง
+}
+
+// การแจ้งเตือนแผนก (รอ Approve)
+model Notification {
+  id              String   @id @default(cuid())
+  lawId           String
+  law             Law      @relation(fields: [lawId], references: [id], onDelete: Cascade)
+  
+  targetDept      String   // แผนกปลายทาง
+  targetEmail     String?  // อีเมลปลายทาง
+  subject         String   // หัวข้อ
+  message         String   @db.Text // ข้อความ
+  
+  status          NotificationStatus @default(PENDING)
+  approvedBy      String?  // ผู้ Approve
+  approvedAt      DateTime?
+  sentAt          DateTime?
+  
+  createdAt       DateTime @default(now())
+
+  @@index([status])
+}
+
+enum NotificationStatus {
+  PENDING         // รออนุมัติ
+  APPROVED        // อนุมัติแล้ว รอส่ง
+  SENT            // ส่งแล้ว
+  REJECTED        // ปฏิเสธ
+}
+
+// แผนกในองค์กร
+model Department {
+  id              String   @id @default(cuid())
+  name            String   @unique
+  email           String?
+  description     String?
+  
+  createdAt       DateTime @default(now())
+}
+
+// ประวัติการ Sync
+model SyncLog {
+  id              String   @id @default(cuid())
+  source          Source
+  status          String   // SUCCESS, FAILED
+  lawsFound       Int      @default(0)
+  lawsAdded       Int      @default(0)
+  errorMessage    String?
+  
+  startedAt       DateTime @default(now())
+  completedAt     DateTime?
+}
