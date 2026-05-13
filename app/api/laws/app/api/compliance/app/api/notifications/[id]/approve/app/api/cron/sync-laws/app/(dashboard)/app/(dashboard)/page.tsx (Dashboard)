@@ -1,0 +1,150 @@
+// app/(dashboard)/page.tsx
+import { prisma } from '@/lib/db'
+import { ComplianceChart } from '@/components/dashboard/ComplianceChart'
+import { formatDate } from '@/lib/utils'
+
+export const dynamic = 'force-dynamic'
+
+export default async function DashboardPage() {
+  // ดึงสถิติ
+  const [
+    totalLaws,
+    pendingLaws,
+    complianceStats,
+    pendingNotifications,
+    recentLaws,
+  ] = await Promise.all([
+    prisma.law.count({ where: { status: 'ACTIVE' } }),
+    prisma.law.count({ where: { status: 'PENDING' } }),
+    prisma.compliance.groupBy({
+      by: ['status'],
+      _count: { status: true },
+    }),
+    prisma.notification.count({ where: { status: 'PENDING' } }),
+    prisma.law.findMany({
+      take: 5,
+      orderBy: { createdAt: 'desc' },
+      include: { _count: { select: { requirements: true } } },
+    }),
+  ])
+
+  // แปลง stats เป็น object
+  const statsMap = Object.fromEntries(
+    complianceStats.map((s) => [s.status, s._count.status])
+  )
+
+  const totalAssessed =
+    (statsMap['COMPLIANT'] || 0) +
+    (statsMap['PARTIAL'] || 0) +
+    (statsMap['NON_COMPLIANT'] || 0) +
+    (statsMap['NOT_APPLICABLE'] || 0)
+
+  const complianceRate =
+    totalAssessed > 0
+      ? Math.round(
+          ((statsMap['COMPLIANT'] || 0) / totalAssessed) * 100
+        )
+      : 0
+
+  return (
+    <div className="space-y-6">
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <StatCard
+          title="กฎหมายที่ใช้บังคับ"
+          value={totalLaws}
+          subtitle={`${pendingLaws} รอวิเคราะห์`}
+          color="blue"
+        />
+        <StatCard
+          title="อัตราความสอดคล้อง"
+          value={`${complianceRate}%`}
+          subtitle={`จาก ${totalAssessed} ข้อที่ประเมิน`}
+          color="green"
+        />
+        <StatCard
+          title="ไม่สอดคล้อง"
+          value={statsMap['NON_COMPLIANT'] || 0}
+          subtitle="ต้องดำเนินการแก้ไข"
+          color="red"
+        />
+        <StatCard
+          title="รออนุมัติส่ง"
+          value={pendingNotifications}
+          subtitle="การแจ้งเตือนแผนก"
+          color="yellow"
+        />
+      </div>
+
+      {/* Charts */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-white rounded-xl p-6 shadow-sm">
+          <h3 className="text-lg font-medium mb-4">
+            สถานะความสอดคล้อง
+          </h3>
+          <ComplianceChart data={statsMap} />
+        </div>
+
+        <div className="bg-white rounded-xl p-6 shadow-sm">
+          <h3 className="text-lg font-medium mb-4">
+            กฎหมายที่เพิ่มล่าสุด
+          </h3>
+          <div className="space-y-3">
+            {recentLaws.map((law) => (
+              <div
+                key={law.id}
+                className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
+              >
+                <div>
+                  <p className="font-medium text-sm line-clamp-1">
+                    {law.title}
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    {formatDate(law.publishedDate)} •{' '}
+                    {law._count.requirements} ข้อกำหนด
+                  </p>
+                </div>
+                <span
+                  className={`px-2 py-1 text-xs rounded-full ${
+                    law.status === 'ACTIVE'
+                      ? 'bg-green-100 text-green-700'
+                      : 'bg-yellow-100 text-yellow-700'
+                  }`}
+                >
+                  {law.status === 'ACTIVE' ? 'วิเคราะห์แล้ว' : 'รอวิเคราะห์'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function StatCard({
+  title,
+  value,
+  subtitle,
+  color,
+}: {
+  title: string
+  value: string | number
+  subtitle: string
+  color: 'blue' | 'green' | 'red' | 'yellow'
+}) {
+  const colors = {
+    blue: 'bg-blue-50 border-blue-200',
+    green: 'bg-green-50 border-green-200',
+    red: 'bg-red-50 border-red-200',
+    yellow: 'bg-yellow-50 border-yellow-200',
+  }
+
+  return (
+    <div className={`p-5 rounded-xl border ${colors[color]}`}>
+      <p className="text-sm text-gray-600">{title}</p>
+      <p className="text-3xl font-bold mt-1">{value}</p>
+      <p className="text-xs text-gray-500 mt-1">{subtitle}</p>
+    </div>
+  )
+}
